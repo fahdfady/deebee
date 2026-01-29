@@ -3,13 +3,14 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::{collections::HashMap, path::Path};
 
-struct Map {
-    items: Vec<(String, String)>,
-}
+// HashMap in-memory index buffer-of-start, buffer-of-end
+struct Index(HashMap<u32, u32>);
+
+struct Map(Vec<(String, String)>);
 
 impl Map {
     fn new() -> Self {
-        Self { items: Vec::new() }
+        Self(Vec::new())
     }
 }
 
@@ -21,7 +22,7 @@ struct Database {
 impl Database {
     pub fn new(file_path: &str) -> Self {
         if !&Path::new(file_path).exists() {
-            File::create_new(file_path).expect("Couldnt' create d!atabase file");
+            File::create_new(file_path).expect("Couldnt' create database file");
         }
 
         Self {
@@ -30,8 +31,7 @@ impl Database {
         }
     }
 
-    // TODO change this to return a Result
-    pub fn get_by_key(mut self, key: &str) -> String {
+    pub fn get_by_key(self, key: &str) -> Result<String, Box<dyn std::error::Error>> {
         let content = fs::read_to_string(self.file_path).expect("couldn't read database");
 
         let mut result = String::new();
@@ -42,11 +42,10 @@ impl Database {
             }
         }
 
-        result
+        Ok(result)
     }
 
-    // TODO change this to return a Result
-    pub fn set_by_key(mut self, key: &str, value: &str) {
+    pub fn set_by_key(self, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
         // append to file with "key, value"
         let content = fs::read_to_string(self.file_path.clone()).expect("couldn't read database");
 
@@ -56,6 +55,8 @@ impl Database {
             .unwrap()
             .write_all(all_content.as_bytes())
             .expect("Couldn't write");
+
+        Ok(())
     }
 }
 
@@ -85,11 +86,11 @@ fn main() {
         Command::Get { key } => {
             println!("get called, {}", key);
             let query = db.get_by_key(key.as_ref());
-            println!("{}", query);
+            println!("{}", query.unwrap())
         }
         Command::Set { key, value } => {
             println!("set called, {}, {}", key, value);
-            db.set_by_key(&key, &value);
+            db.set_by_key(&key, &value).unwrap();
         }
     }
 }
