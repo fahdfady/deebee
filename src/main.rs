@@ -3,9 +3,10 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::{collections::HashMap, path::Path};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 // HashMap in-memory index buffer-of-start, buffer-of-end
-struct Index(HashMap<u32, u32>);
+// key is String because our key in the DB can be anything, not just a number
+struct Index(HashMap<String, u32>);
 
 impl Index {
     pub fn new() -> Self {
@@ -13,11 +14,11 @@ impl Index {
     }
 
     /// add an item to the index
-    pub fn insert(mut self, x: u32, y: u32) {
-        self.0.insert(x, y);
+    pub fn insert(&mut self, k: &str, v: u32) {
+        self.0.insert(k.to_string(), v);
     }
 
-    pub fn remove(mut self, x: &u32) {
+    pub fn remove(&mut self, x: &str) {
         self.0.remove(x);
     }
 }
@@ -30,6 +31,13 @@ impl Map {
         match value {
             Some(v) => Self(v),
             _ => Self(Vec::new()),
+        }
+    }
+
+    pub fn get_key(&self, index: usize) -> Result<String, Box<dyn std::error::Error>> {
+        match self.0.get(index) {
+            Some(value) => Ok(value.clone().0),
+            None => Err("index out of bounds".into()),
         }
     }
 
@@ -47,14 +55,9 @@ impl Map {
             let parts = parts_remove_whitespace.split(",").collect::<Vec<&str>>();
 
             // the usage of a tup binding is a brute-force solution. must be refactored later
-            let mut tup: (String, String) = ("".to_string(), "".to_string());
+            result.push((parts[0].to_string(), parts[1].to_string()));
 
-            tup.0 = parts[0].to_string();
-            tup.1 = parts[1].to_string();
-
-            result.push(tup);
-
-            println!("{result:?}");
+            // println!("{result:?}");
         }
 
         let map = Map::new(Some(result));
@@ -73,7 +76,7 @@ impl Database {
     pub fn new(file_path: &str) -> Self {
         // in-memory index
         // check each line for data and take first and last line buffer number and store in index
-        let idx = Index::new();
+        let mut idx = Index::new();
 
         let map = Map::new(None);
 
@@ -92,23 +95,28 @@ impl Database {
             let file_content = fs::read_to_string(file_path_path).unwrap();
 
             if !file_content.is_empty() {
-                let mut key: u32 = 0;
+                let mut offset: u32 = 0;
 
-                map.clone().read_database(&file_content).unwrap();
+                let map = map.clone().read_database(&file_content).unwrap();
+
+                // get each key from the database and store it in the index HashMap
+
+                let mut line_number: usize = 0;
 
                 for line in file_content.lines() {
                     // let v: u32 = (line.len() as u32) - 1 + key;
                     // let key = (line.len() as u32) + key;
 
-                    // FIX: the key shouldn't be the first byte, it should be the key of the item
-                    // itself, therefore, ocerriding eachother when repated. while the value is
-                    // for the first byte where the key is there.
-                    let value = (line.len() as u32) + key;
-                    idx.clone().insert(key, value);
+                    let key = map.get_key(line_number).expect("couldn't get key");
 
-                    key = value + 1;
-                    // println!("{}", line.len());
+                    idx.insert(&key, offset);
+
+                    offset += line.len() as u32;
+
+                    line_number += 1;
                 }
+
+                println!("{:?}", idx.0);
             } else {
                 todo!();
             }
@@ -169,8 +177,6 @@ fn main() {
     let args = Args::parse();
 
     let db = Database::new("db.deebee");
-
-    println!("{}", db.file_path);
 
     match args.command {
         Command::Get { key } => {
