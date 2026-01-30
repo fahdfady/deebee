@@ -3,6 +3,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::{collections::HashMap, path::Path};
 
+#[derive(Clone)]
 // HashMap in-memory index buffer-of-start, buffer-of-end
 struct Index(HashMap<u32, u32>);
 
@@ -21,11 +22,44 @@ impl Index {
     }
 }
 
+#[derive(Clone)]
 struct Map(Vec<(String, String)>);
 
 impl Map {
-    fn new() -> Self {
-        Self(Vec::new())
+    fn new(value: Option<Vec<(String, String)>>) -> Self {
+        match value {
+            Some(v) => Self(v),
+            _ => Self(Vec::new()),
+        }
+    }
+
+    /// if the database is already there, read the content and convert it to a rust struct
+    pub fn read_database(self, file_content: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        // reverse the operation of reading line-by-line
+
+        let mut result: Vec<(String, String)> = Vec::new();
+
+        for line in file_content.lines() {
+            // therfore, we must FORBID using commas `,` in either key or value in our database
+            let parts_remove_whitespace = line.split_whitespace().collect::<String>();
+
+            // every line has parts
+            let parts = parts_remove_whitespace.split(",").collect::<Vec<&str>>();
+
+            // the usage of a tup binding is a brute-force solution. must be refactored later
+            let mut tup: (String, String) = ("".to_string(), "".to_string());
+
+            tup.0 = parts[0].to_string();
+            tup.1 = parts[1].to_string();
+
+            result.push(tup);
+
+            println!("{result:?}");
+        }
+
+        let map = Map::new(Some(result));
+
+        Ok(map)
     }
 }
 
@@ -38,8 +72,10 @@ struct Database {
 impl Database {
     pub fn new(file_path: &str) -> Self {
         // in-memory index
-        let idx = Index::new();
         // check each line for data and take first and last line buffer number and store in index
+        let idx = Index::new();
+
+        let map = Map::new(None);
 
         let file_path_path = Path::new(file_path);
         if !&file_path_path.exists() {
@@ -50,19 +86,25 @@ impl Database {
             // if there is content --> scan the file line by line, first byte number and last byte
             // number goes into the index,
             // else -- > continue
+            //
+            // this should be probably delegated to Index struct in a method or something
 
             let file_content = fs::read_to_string(file_path_path).unwrap();
 
             if !file_content.is_empty() {
                 let mut key: u32 = 0;
 
+                map.clone().read_database(&file_content).unwrap();
+
                 for line in file_content.lines() {
                     // let v: u32 = (line.len() as u32) - 1 + key;
                     // let key = (line.len() as u32) + key;
 
+                    // FIX: the key shouldn't be the first byte, it should be the key of the item
+                    // itself, therefore, ocerriding eachother when repated. while the value is
+                    // for the first byte where the key is there.
                     let value = (line.len() as u32) + key;
-
-                    println!("K: {}, V: {}", key, value);
+                    idx.clone().insert(key, value);
 
                     key = value + 1;
                     // println!("{}", line.len());
@@ -73,7 +115,7 @@ impl Database {
         }
 
         Self {
-            map: Map::new(),
+            map,
             file_path: file_path.to_string(),
             idx,
         }
