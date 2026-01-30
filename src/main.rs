@@ -1,10 +1,25 @@
 use clap::{Parser, Subcommand};
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::{collections::HashMap, path::Path};
 
 // HashMap in-memory index buffer-of-start, buffer-of-end
 struct Index(HashMap<u32, u32>);
+
+impl Index {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    /// add an item to the index
+    pub fn insert(mut self, x: u32, y: u32) {
+        self.0.insert(x, y);
+    }
+
+    pub fn remove(mut self, x: &u32) {
+        self.0.remove(x);
+    }
+}
 
 struct Map(Vec<(String, String)>);
 
@@ -17,17 +32,50 @@ impl Map {
 struct Database {
     map: Map,
     file_path: String,
+    idx: Index,
 }
 
 impl Database {
     pub fn new(file_path: &str) -> Self {
-        if !&Path::new(file_path).exists() {
+        // in-memory index
+        let idx = Index::new();
+        // check each line for data and take first and last line buffer number and store in index
+
+        let file_path_path = Path::new(file_path);
+        if !&file_path_path.exists() {
             File::create_new(file_path).expect("Couldnt' create database file");
+        } else {
+            // if the database is already there,
+            // check if we have content,
+            // if there is content --> scan the file line by line, first byte number and last byte
+            // number goes into the index,
+            // else -- > continue
+
+            let file_content = fs::read_to_string(file_path_path).unwrap();
+
+            if !file_content.is_empty() {
+                let mut key: u32 = 0;
+
+                for line in file_content.lines() {
+                    // let v: u32 = (line.len() as u32) - 1 + key;
+                    // let key = (line.len() as u32) + key;
+
+                    let value = (line.len() as u32) + key;
+
+                    println!("K: {}, V: {}", key, value);
+
+                    key = value + 1;
+                    // println!("{}", line.len());
+                }
+            } else {
+                todo!();
+            }
         }
 
         Self {
             map: Map::new(),
             file_path: file_path.to_string(),
+            idx,
         }
     }
 
