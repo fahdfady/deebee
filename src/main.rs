@@ -1,7 +1,12 @@
 use clap::{Parser, Subcommand};
 use std::fs::{self, File};
 use std::io::Write;
+use std::path::PathBuf;
 use std::{collections::HashMap, path::Path};
+
+// each segment got a number of entries it can afford
+// for here, each segment carry up to 10 entries
+const SEGMENT_SIZE: usize = 10;
 
 #[derive(Clone, Debug)]
 // HashMap in-memory index buffer-of-start, buffer-of-end
@@ -58,30 +63,41 @@ impl Map {
 }
 
 struct Database {
+    db_name: String,
     map: Map,
-    file_path: String,
     idx: Index,
+    segment_files_paths: Vec<String>,
 }
 
 impl Database {
-    pub fn new(file_path: &str) -> Self {
+    pub fn new(db_name: &str) -> Self {
         let mut idx = Index::new();
         let map = Map::new(None);
-        let file_path_path = Path::new(file_path);
+        // let file_path_path = Path::new(file_path);
 
-        if !file_path_path.exists() {
+        let mut segment_files_paths = Vec::new();
+
+        let mut seg_idx: usize = 1;
+        let file_path = Self::create_segement_file(db_name, seg_idx);
+
+        segment_files_paths.push(file_path.to_str().unwrap().to_string());
+
+        seg_idx += 1;
+
+        if !file_path.exists() {
             File::create_new(file_path).expect("Couldnt' create database file");
             Self {
+                db_name: db_name.to_string(),
                 map,
-                file_path: file_path.to_string(),
                 idx,
+                segment_files_paths,
             }
         } else {
             // when you connect a databse that is already there
             // first, index the whole DB into a hashmap so it's easier to navigate in-memory
             // without many I/O disk operations.
 
-            let file_content = fs::read_to_string(file_path_path).unwrap();
+            let file_content = fs::read_to_string(file_path).unwrap();
 
             if !file_content.is_empty() {
                 let map = map.clone().read_database(&file_content).unwrap();
@@ -118,11 +134,23 @@ impl Database {
                 }
             }
             Self {
+                db_name: db_name.to_string(),
                 map, // Note: map might be empty if file_content was empty
-                file_path: file_path.to_string(),
                 idx,
+                segment_files_paths,
             }
         }
+    }
+
+    fn create_segement_file(db_name: &str, seg_idx: usize) -> PathBuf {
+        let file_path = format!("{db_name}{seg_idx}.log");
+        let file = File::create_new(&file_path).expect("Couldnt' create segment file {}");
+
+        PathBuf::from(&file_path)
+    }
+
+    fn compact_segments() {
+        todo!()
     }
 
     pub fn get_by_key(&self, key: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -130,6 +158,7 @@ impl Database {
         if let Some(&offset) = self.idx.0.get(key) {
             use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
+            // TODO: change this to the new data segments approach
             let file = File::open(&self.file_path)?;
             let mut reader = BufReader::new(file);
 
@@ -149,6 +178,7 @@ impl Database {
 
     pub fn set_by_key(self, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
         // append to file with "key, value"
+        // TODO: change this to the new data segments approach
         let content = fs::read_to_string(self.file_path.clone()).expect("couldn't read database");
 
         let new_line = format!("{}, {}", key, value);
@@ -164,6 +194,7 @@ impl Database {
             }
         };
 
+        // TODO: change this to the new data segments approach
         File::create(self.file_path)
             .unwrap()
             .write_all(all_content.as_bytes())
