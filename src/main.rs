@@ -159,7 +159,7 @@ impl Database {
             use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
             // TODO: change this to the new data segments approach
-            let file = File::open(&self.file_path)?;
+            let file = File::open(&self.db_name)?;
             let mut reader = BufReader::new(file);
 
             reader.seek(SeekFrom::Start(offset))?;
@@ -179,7 +179,7 @@ impl Database {
     pub fn set_by_key(self, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error>> {
         // append to file with "key, value"
         // TODO: change this to the new data segments approach
-        let content = fs::read_to_string(self.file_path.clone()).expect("couldn't read database");
+        let content = fs::read_to_string(self.db_name.clone()).expect("couldn't read database");
 
         let new_line = format!("{}, {}", key, value);
         let all_content = if content.is_empty() {
@@ -195,7 +195,7 @@ impl Database {
         };
 
         // TODO: change this to the new data segments approach
-        File::create(self.file_path)
+        File::create(self.db_name)
             .unwrap()
             .write_all(all_content.as_bytes())
             .expect("Couldn't write");
@@ -206,23 +206,37 @@ impl Database {
 
 #[derive(Subcommand, Clone, Debug)]
 enum Command {
+    /// Get value by key
     Get { key: String },
+    /// Set key and value
     Set { key: String, value: String },
+    /// Create a new database
+    New,
 }
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
+    #[arg(short, long)]
+    db_name: String,
+
     #[command(subcommand)]
     command: Command,
+}
+
+fn config() {
+    File::create_new("deebee.toml").unwrap();
 }
 
 fn main() {
     let args = Args::parse();
 
-    let db = Database::new("db.deebee");
+    let db = Database::new(&args.db_name);
 
     match args.command {
+        Command::New => {
+            todo!();
+        }
         Command::Get { key } => {
             println!("get called, {}", key);
             let query = db.get_by_key(key.as_ref());
