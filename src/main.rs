@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
@@ -7,6 +8,69 @@ use std::{collections::HashMap, path::Path};
 // each segment got a number of entries it can afford
 // for here, each segment carry up to 10 entries
 const SEGMENT_SIZE: usize = 10;
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+struct ConfigFile {
+    #[serde(default)]
+    databases: Vec<DatabaseConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct DatabaseConfig {
+    name: String,
+    segments_files_paths: Vec<String>,
+}
+
+struct Config {
+    inner: ConfigFile,
+}
+
+impl Config {
+    /// Load configuration from deebee.toml
+    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
+        let config_path = "deebee.toml";
+
+        if !Path::new(config_path).exists() {
+            // Create default config if it doesn't exist
+            let default_config = Config {
+                inner: ConfigFile::default(),
+            };
+            default_config.save()?;
+            return Ok(default_config);
+        }
+
+        let content = fs::read_to_string(config_path)?;
+        let config_file: ConfigFile = toml::from_str(&content)?;
+        Ok(Config { inner: config_file })
+    }
+
+    /// Save configuration to deebee.toml
+    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let toml_string = toml::to_string_pretty(&self.inner)?;
+        let mut file = File::create("deebee.toml")?;
+        file.write_all(toml_string.as_bytes())?;
+        Ok(())
+    }
+
+    /// Get database configuration by name
+    pub fn get_database(&self, db_name: &str) -> Option<&DatabaseConfig> {
+        self.inner.databases.iter().find(|db| db.name == db_name)
+    }
+
+    /// Add or update a database configuration
+    pub fn upsert_database(&mut self, db_config: DatabaseConfig) {
+        if let Some(pos) = self
+            .inner
+            .databases
+            .iter()
+            .position(|db| db.name == db_config.name)
+        {
+            self.inner.databases[pos] = db_config;
+        } else {
+            self.inner.databases.push(db_config);
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 // HashMap in-memory index buffer-of-start, buffer-of-end
@@ -71,33 +135,73 @@ struct Database {
 
 impl Database {
     pub fn new(db_name: &str) -> Self {
+        let mut config = Config::load().expect("Failed to load config");
+
+        // Check if database exists in config
+        if let Some(db_config) = config.get_database(db_name) {
+            // Load existing database from config
+            Self::load_from_config(db_name, db_config.clone())
+        } else {
+            // Create new database and save to config
+            let db = Self::create_new(db_name);
+
+            // Save database configuration
+            let db_config = DatabaseConfig {
+                name: db_name.to_string(),
+                segments_files_paths: db.segment_files_paths.clone(),
+            };
+            config.upsert_database(db_config);
+            config.save().expect("Failed to save config");
+
+            db
+        }
+    }
+
+    fn create_new(db_name: &str) -> Self {
         let mut idx = Index::new();
         let map = Map::new(None);
-        // let file_path_path = Path::new(file_path);
 
         let mut segment_files_paths = Vec::new();
 
-        let mut seg_idx: usize = 1;
+        let seg_idx: usize = 1;
         let file_path = Self::create_segement_file(db_name, seg_idx);
 
         segment_files_paths.push(file_path.to_str().unwrap().to_string());
 
-        seg_idx += 1;
+        Self {
+            db_name: db_name.to_string(),
+            map,
+            idx,
+            segment_files_paths,
+        }
+    }
 
-        if !file_path.exists() {
-            File::create_new(file_path).expect("Couldnt' create database file");
+    fn load_from_config(db_name: &str, db_config: DatabaseConfig) -> Self {
+        let mut idx = Index::new();
+        let map = Map::new(None);
+
+        // Use the first segment file path from config
+        let file_path = db_config
+            .segments_files_paths
+            .get(0)
+            .expect("No segment files in config");
+
+        let path = Path::new(file_path);
+
+        if !path.exists() {
+            File::create_new(path).expect("Couldn't create database file");
             Self {
                 db_name: db_name.to_string(),
                 map,
                 idx,
-                segment_files_paths,
+                segment_files_paths: db_config.segments_files_paths,
             }
         } else {
             // when you connect a databse that is already there
             // first, index the whole DB into a hashmap so it's easier to navigate in-memory
             // without many I/O disk operations.
 
-            let file_content = fs::read_to_string(file_path).unwrap();
+            let file_content = fs::read_to_string(path).unwrap();
 
             if !file_content.is_empty() {
                 let map = map.clone().read_database(&file_content).unwrap();
@@ -132,19 +236,27 @@ impl Database {
 
                     offset += line.len() as u64 + 1;
                 }
-            }
-            Self {
-                db_name: db_name.to_string(),
-                map, // Note: map might be empty if file_content was empty
-                idx,
-                segment_files_paths,
+
+                Self {
+                    db_name: db_name.to_string(),
+                    map,
+                    idx,
+                    segment_files_paths: db_config.segments_files_paths,
+                }
+            } else {
+                Self {
+                    db_name: db_name.to_string(),
+                    map, // Note: map might be empty if file_content was empty
+                    idx,
+                    segment_files_paths: db_config.segments_files_paths,
+                }
             }
         }
     }
 
     fn create_segement_file(db_name: &str, seg_idx: usize) -> PathBuf {
         let file_path = format!("{db_name}{seg_idx}.log");
-        let file = File::create_new(&file_path).expect("Couldnt' create segment file {}");
+        let file = File::create_new(&file_path).expect("Couldn't create segment file");
 
         PathBuf::from(&file_path)
     }
@@ -224,10 +336,6 @@ struct Args {
     command: Command,
 }
 
-fn config() {
-    File::create_new("deebee.toml").unwrap();
-}
-
 fn main() {
     let args = Args::parse();
 
@@ -248,3 +356,4 @@ fn main() {
         }
     }
 }
+

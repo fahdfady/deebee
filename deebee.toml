@@ -1,0 +1,7 @@
+[[databases]]
+name = "app"
+segments_files_paths = ["app1.log"]
+
+[[databases]]
+name = "application"
+segments_files_paths = ["application1.log"]
